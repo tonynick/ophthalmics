@@ -1,0 +1,197 @@
+---
+title: "Ophthalmology Minims Cost Time-Series Analysis"
+author: "Tony Nickonchuk"
+date: "9/9/2020"
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,fig.width = 9,fig.height = 6,align="center")
+```
+
+```{r library load, include=FALSE}
+library(nlme)
+library(car)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(its.analysis)
+library(feasts)
+library(tsibble)
+library(forecast)
+library(caret)
+library(lubridate)
+```
+
+## Objective
+
+The objective of this analysis is to evaluate the usage of Minims drops by the ophthalmology services at the Royal Alexandra Hospital (RAH). In 2014, RAH Ophthalmology switched to Minims single-use eye droppers for most uses. Work is underway currently to determine if RAH can switch back to multi-dose bottles safely in order to minimize drug costs. As such, an interrupted time-series analysis was done in order to determine the cost impact of changing to Minims at the RAH in 2014.
+
+## Methods
+
+Using the DOSE drug utilization database, all transactions for RAH for tropicamide, phenylephrine and cyclopentolate were extracted from April 2013 to March 2015. As the changeover at RAH took place in April 2014, data was extracted in order to give a year of data before the change and a year after. 
+
+In order to control for any temporal changes in general opthalmology prescribing patterns, matching data was also obtained for Rockyview General Hospital (RGH), the main ophthalmology centre in Calgary. RGH was used as a control group in the analysis.
+
+DIMR Analytics was tasked to pull all ophthalmology procedure/diagnostic codes at both facilities for the same time period. This was done so that drug utilization could be normalized to workload so as to eliminate the impact of any change in patient volume at each site on the outcome of interest.
+
+For the DOSE extraction, the same functional centres as those used for the DIMR procedure/diagnostic code extraction were used. The vast majority of procedures/diagnostics and drug utilization occurred within the "Ophthalmology Specialty Clinic" functional centre.
+
+Drug utilization data was summarized by month and year for each site in terms of total mL of all three drugs used, total mL of all three drugs used that was in the form of Minims, and the total cost for all three drugs. From there, percentage of use consisting of Minims and cost per mL used were also calculated as well as cost per procedure/diagnostic code.
+
+The time-series analysis was done using an interrupted time-series analysis methodology taught by Dr. Michael Law, a health economist at the University of British Columbia, who also teaches an edX.org course called [Interrupted Time Series Analysis](https://www.edx.org/course/policy-analysis-using-interrupted-time-series). R-code for the analysis is available on GitHub at [this link](https://github.com/kdlinda/ITSxPolicyAnalysis/blob/master/Ex2/Medicaid_W3.R) and can be provided for this specific analysis upon request.
+
+```{r data extraction, include=FALSE,warning=F}
+df<-read.csv("~/csv/ophthalmicits.csv",stringsAsFactors = F)
+df$date_lab<-paste(df$Month,df$Year,sep=" ")
+```
+
+## Summary of the Data
+
+Below are some graphs showing the time series trends of Minims use, total use, and cost at both sites.
+
+
+```{r plots, echo=FALSE,warning=FALSE,message=FALSE}
+#first plot time series for each variable comparing RGH to RAH
+minims<-df%>%dplyr::select(Site,Time,date_lab,min_mL,Tot_Vol)%>%mutate(min_mL=min_mL/Tot_Vol*1000)
+#total<-df%>%dplyr::select(Site,Time,date_lab,ml_per_vol)
+cost<-df%>%dplyr::select(Site,Time,date_lab,cost)
+cost_pc<-df%>%dplyr::select(Site,Time,date_lab,cost_per_vol)
+
+seq<-c(1,seq(3,24,by=3))
+ymax<-max(minims$min_mL)/2
+mp<-ggplot(minims,aes(x=Time,y=min_mL,col=Site))+geom_line(size=1)+geom_vline(xintercept=13,linetype="dotted",size=1)+annotate("text",x=13,y=ymax,label="Change to Minims",angle=90,vjust=-0.5)+
+  ggtitle("Time Trend of Minims Utilization")+labs(x="Month",y="Minims (mL) per 1000 Proc/Diag Codes")+scale_x_continuous(breaks=seq,labels=minims$date_lab[seq],minor_breaks=seq(0,24))+annotate("text",x=20,y=125,label="p-value for significance\nof post-change trend=0.00114")
+mp
+
+#ymax<-max(total$ml_per_vol)/2
+#tp<-ggplot(total,aes(x=Time,y=ml_per_vol,col=Site))+geom_line(size=1)+geom_vline(xintercept=13,linetype="dotted",size=1)+annotate(#"text",x=13,y=ymax,label="Change to Minims",angle=90,vjust=-0.5)+ggtitle("Time Trend of Total Ophthalmic Drug #Utilization")+labs(x="Month",y="Total Drug (mL) per 1000 Proc/Diag #Codes")+scale_x_continuous(breaks=seq,labels=total$date_lab[seq],minor_breaks=seq(0,24))  
+#tp
+
+ymax<-max(cost$cost)/2
+cp<-ggplot(cost,aes(x=Time,y=cost,col=Site))+geom_line(size=1)+geom_vline(xintercept=13,linetype="dotted",size=1)+
+  annotate("text",x=13,y=ymax,label="Change to Minims",angle=90,vjust=-0.5)+
+  ggtitle("Time Trend of Unadjusted Eye Drop Cost")+labs(x="Month",y="Cost ($)")+scale_x_continuous(breaks=seq,labels=cost$date_lab[seq],minor_breaks=seq(0,24))+annotate("text",x=20,y=1400,label="p-value for significance\nof post-change trend=0.00959")
+cp
+
+ymax<-max(cost_pc$cost_per_vol)/2
+pc<-ggplot(cost_pc,aes(x=Time,y=cost_per_vol,col=Site))+geom_line(size=1)+geom_vline(xintercept=13,linetype="dotted",size=1)+annotate("text",x=13,y=ymax,label="Change to Minims",angle=90,vjust=-0.5)+
+  ggtitle("Time Trend of Cost per Procedure/Diagnostic Code Volume")+labs(x="Month",y="Cost ($) per 1000 Proc/Diag Codes")+scale_x_continuous(breaks=seq,labels=cost_pc$date_lab[seq],minor_breaks=seq(0,24))+annotate("text",x=20,y=650,label="p-value for significance\nof post-change trend=0.00685")
+pc
+
+```
+
+## Evaluation
+From the graphs it's clear that Minims use at RAH increased significantly after April 2014, even controlled for workload, and that the same did not occur at the control site, RGH. 
+
+## Time-Series Analysis
+
+Using the methodology above, interrupted time-series analysis is conducted to determine the impact on the cost of eye drops at RAH after the switch to Minims. Using this method, a counterfactual scenario can be predicted by taking out the calculated impact of the Minims switch and determining what costs may have looked like had the switch not occurred. From there, a projected cost impact can be determined.
+
+First, a simple linear regression is done to determine the significance, if any, of the intervention. In this case the intervention is the change to Minims. The wild point analysis methodology from the course referenced above was used in this case. There was a significant spike in utilization in October 2014 at RAH that appears to be a statistical outlier and looks to be an artifact of inventory adjustments done in the system that artificially elevated the quantity of eye drops used that month at the RAH. In the regression, that month is coded as 1, whereas the remaining months are coded as 0. It allows an adjustment to be made for that outlier in order to capture the overall trend and not have a single month skew the analysis.
+
+```{r ols_regression,include=FALSE}
+df$rah<-ifelse(df$Site=="RAH",1,0)
+df$rahtime<-df$rah*df$Time
+df$rahlevel<-df$rah*df$Level
+df$rahtrend<-df$rah*df$Trend
+df$wp<-c(rep(0,18),1,rep(0,29)) #to control for wildpoint in rah data in one month
+
+ols<-lm(cost_per_vol~Time+rah+rahtime+Level+Trend+rahlevel+rahtrend+wp,data=df)
+summary(ols)
+confint(ols)
+(sum(df$Tot_Vol[df$Site=="RAH"&df$Level==1])/1000)*12*45
+(sum(df$Tot_Vol[df$Site=="RAH"&df$Level==1])/1000)*12*141
+```
+After conducting the linear regression, it's estimated that the change to Minims raised drug costs \$93 (95% CI \$45-\$141; p=0.0004) per 1000 procedure/diagnostic codes per month after the change.
+
+However, that is only a preliminary estimate and further control of the data is required before arriving at a more concrete estimate.
+```{r,include=F}
+plot(residuals(ols))
+par(mfrow=c(1,2))
+acf(residuals(ols))
+acf(residuals(ols),type="partial",plot=F)
+acf(residuals(ols),plot=F)
+
+p0<-gls(cost_per_vol~Time+rah+rahtime+Level+Trend+rahlevel+rahtrend+wp,data=df,correlation=NULL,method="ML")
+summary(p0)
+
+#remove wild point
+df$wp<-0
+df$fitted<-predict(ols,df)
+counter<-df
+counter$rahlevel<-0
+counter$rahtrend<-0
+df$counter<-predict(ols,counter)
+```
+
+
+```{r,echo=F}
+ggplot(df,aes(x=Time,y=cost_per_vol,col=Site))+geom_point()+geom_vline(xintercept=12.5,linetype="dashed")+labs(x="Month",y="Cost ($) per 1000 Proc/Diag Codes")+ggtitle("Interrupted Time-Series Analysis of Cost of Ophthalmologic Drug Use at RAH & RGH",subtitle="Solid lines=Trend of observed data\nDashed line=Trend of counterfactual scenario")+annotate("text",x=12.5,y=1500,hjust=1,vjust=-0.5,angle=90,label="Change to Minims")+annotate("segment",x=1,xend=12,y=df$fitted[1],yend=df$fitted[12],colour="#F8766D",size=1)+annotate("segment",x=13,xend=24,y=df$fitted[13],yend=df$fitted[24],colour="#F8766D",size=1)+annotate("segment",x=1,xend=12,y=df$fitted[25],yend=df$fitted[36],colour="#00BFC4",size=1)+annotate("segment",x=13,xend=24,y=df$fitted[37],yend=df$fitted[48],colour="#00BFC4",size=1)+annotate("segment",x=13,xend=24,y=df$counter[13],yend=df$counter[24],colour="#F8766D",size=1,linetype="dashed")+scale_x_continuous(breaks=seq,labels=cost_pc$date_lab[seq],minor_breaks=seq(0,24))+annotate("text",x=18.5,y=500,label="p-value for significance\nof post-change trend=0.0004")
+```
+
+The secondary analysis showed no significant auto-correlation in the data and so the model remained unchanged from the initial analysis. The interrupted time-series model overall explains 91% of the variation in the data (p < 2e-16) with the change to Minims impacting cost to the magnitude listed above.
+
+```{r, include=F}
+fitconf<-predict(ols,df,se.fit=T)
+fitconf<-data.frame(fitconf)
+fitconf$upr<-fitconf$fit+1.96*fitconf$se.fit
+fitconf$lwr<-fitconf$fit-1.96*fitconf$se.fit
+fitconf<-fitconf[13:24,]
+ctrconf<-predict(ols,counter,se.fit=T)
+ctrconf<-data.frame(ctrconf)
+ctrconf$upr<-ctrconf$fit+1.96*ctrconf$se.fit
+ctrconf$lwr<-ctrconf$fit-1.96*ctrconf$se.fit
+ctrconf<-ctrconf[13:24,]
+upperdiff<-data.frame(upper=fitconf$upr,vol=df$Tot_Vol[df$Site=="RAH"&df$Level==1]/1000)
+upperdiff$diff<-upperdiff$upper*upperdiff$vol
+upper<-sum(upperdiff$diff)
+lowerdiff<-data.frame(lower=fitconf$lwr-ctrconf$upr,vol=df$Tot_Vol[df$Site=="RAH"&df$Level==1]/1000)
+lowerdiff$diff<-lowerdiff$lower*lowerdiff$vol
+lower<-sum(lowerdiff$diff)
+middiff<-data.frame(mid=fitconf$fit-ctrconf$fit,vol=df$Tot_Vol[df$Site=="RAH"&df$Level==1]/1000)
+middiff$diff<-middiff$mid*middiff$vol
+mid<-sum(middiff$diff)
+ctrcost<-df$counter*(df$Tot_Vol/1000)
+sum(ctrcost[13:24])
+```
+
+The change to Minims likely cost the RAH ophthalmology program \$22,481 over the course of 12 months (95% CI \$7,830 to \$31,336) compared to what costs would have been without the change. Costs were close to 4 times what would have been expected had baseline trends continued, which makes sense given that the per mL cost of Minims is 4 times that of multidose bottles.
+
+```{r,echo=F}
+diffplot<-data.frame(time=1:12,date_lab=df$date_lab[df$Site=="RAH"&df$Level==1],mid=middiff$diff,upr=upperdiff$diff,lwr=lowerdiff$diff)
+
+ggplot(diffplot,aes(x=time,y=mid))+geom_line()+geom_ribbon(aes(ymin=lwr,ymax=upr),alpha=0.2)+labs(x="Month",y="Cost ($)")+ggtitle("Predicted Difference in Monthly Eye Drop Costs After Minims Change at RAH",subtitle="Shaded area represents 95% confidence interval")+scale_x_continuous(breaks=seq,labels=diffplot$date_lab[seq])
+
+diffplot$cum<-cumsum(diffplot$mid)
+diffplot$cumupr<-cumsum(diffplot$upr)
+diffplot$cumlwr<-cumsum(diffplot$lwr)
+
+ggplot(diffplot,aes(x=time,y=cum))+geom_line()+geom_ribbon(aes(ymin=cumlwr,ymax=cumupr),alpha=0.2)+labs(x="Month",y="Cost ($)")+ggtitle("Predicted Difference in Cumulative Eye Drop Costs Since Minims Change at RAH",subtitle="Shaded area represents 95% confidence interval")+scale_x_continuous(breaks=seq,labels=diffplot$date_lab[seq])
+```
+
+
+
+## Conclusion
+
+Based on this analysis, there is a great deal of confidence in concluding that the switch to predominantly Minims use at RAH lead to a significant increase in total drug costs. This conclusion is strengthened by expanding the expenditure data further into the future and seeing that the expenditure at RAH leveled off after a significant spike after the Minims switch. 
+
+```{r,echo=F}
+dates<-seq(ymd("2013-04-01"),ymd("2020-03-01"),by="month")
+exp<-c(635.2,363.55,430.865,331.57,341.0225,443.4648,456.5822,329.85,529.66,367.53,217.21,371.21,416.8795,554.6434,1957.1324,2074.775,1661.6,2986.6,5172.502,3759.8855,2179.691,2727.0336,3204.2002,3367,2803.1,4615.75,4292,4138.8,2931.1,4396.73,3990.8,3800.6,3552,4088.5,2875.6,4540.6,3940.5,4046.3,4597.362,3544.5385,4341.5829,3558.4021,4441.0665,5158.0522,6727.308,3753.75,3969.1994,4504.5,4258.4757,5428.1088,4128.7338,3089.625,3965.5,2858.625,2964.5,3282.125,2670.7891,3388,2483.25,2926,3253.25,7211.358,3471.7186,2868.25,3722.795,3407.25,4089.55,3004.925,2887.5,3308.8731,3659.27,3326.8202,2709.36,5456.91,4074.864,4147.572,3198.346,4205.5548,4640,3680,3274.3326,2676.0964,2316.3456,4410.4)
+lt<-data.frame(date=dates,exp=exp,time=1:84)
+lt$year<-c(rep("2013/14",12),rep("2014/15",12),rep("2015/16",12),rep("2016/17",12),rep("2017/18",12),rep("2018/19",12),rep("2019/20",12))
+lt$year<-as.factor(lt$year)
+lt<-lt%>%group_by(year)%>%summarise(exp=sum(exp))
+ggplot(lt,aes(x=year,y=exp))+geom_bar(stat="identity")+labs(x="Year",y="Total Expense ($)")+ggtitle("Total Annual Expenses at RAH Ophthalmology Service",subtitle="For three types of drops studied")+geom_vline(xintercept=1.5,linetype="dashed")+annotate("text",x=1.5,y=20000,label="Pre-Minims Change",angle=90,hjust=0,vjust=-0.5)
+```
+
+
+It is recommended that a follow up analysis be done 12 months after a switch away from Minims use if that occurs in order to see if there is a decline in cost of equal magnitude.
+
+
+
